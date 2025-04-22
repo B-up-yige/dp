@@ -327,6 +327,7 @@ const evaluateCardCombo = (cards) => {
 
 // 比较两个手牌的大小
 const compareHands = (hand1, hand2) => {
+  // 首先比较牌型大小（handType值越大，牌型越强）
   if (hand1.value !== hand2.value) {
     return hand1.value - hand2.value;
   }
@@ -531,9 +532,9 @@ class PokerGame {
           player.chips = 0;
           player.isAllIn = true; // 标记玩家为全下状态
         } else {
-          player.chips -= callAmount;
-          player.bet = this.currentBet;
-          this.pot += callAmount;
+        player.chips -= callAmount;
+        player.bet = this.currentBet;
+        this.pot += callAmount;
           // 检查是否在跟注后筹码为0，此时也应该标记为全下
           if (player.chips === 0) {
             player.isAllIn = true;
@@ -1233,8 +1234,14 @@ class PokerGame {
         return;
       }
       
-      // 根据牌型排序确定赢家
+      // 根据牌型排序确定赢家 - 确保正确比较牌型大小
       hands.sort((a, b) => {
+        // 首先比较牌型等级
+        if (a.bestHand.value !== b.bestHand.value) {
+          return b.bestHand.value - a.bestHand.value; // 值越大牌型越强
+        }
+        
+        // 如果牌型相同，比较剩余牌点数
         return compareHands(b.bestHand, a.bestHand);
       });
       
@@ -1768,7 +1775,7 @@ io.on('connection', (socket) => {
         if (rooms[roomId] && rooms[roomId].players[socket.id]) {
           // 安全地调用removePlayer
           try {
-            rooms[roomId].removePlayer(socket.id);
+        rooms[roomId].removePlayer(socket.id);
           } catch (error) {
             console.error(`从房间 ${roomId} 移除玩家 ${socket.id} 时出错:`, error);
             // 如果removePlayer失败，手动从玩家列表中删除
@@ -1785,14 +1792,14 @@ io.on('connection', (socket) => {
               }
             }
           }
-          
-          // 如果房间空了，删除房间
-          if (Object.keys(rooms[roomId].players).length === 0) {
-            delete rooms[roomId];
-          } else {
+        
+        // 如果房间空了，删除房间
+        if (Object.keys(rooms[roomId].players).length === 0) {
+          delete rooms[roomId];
+        } else {
             try {
               // 同时发送room-update和updateGameState事件以兼容旧版本客户端
-              io.to(roomId).emit('room-update', rooms[roomId].getGameState());
+          io.to(roomId).emit('room-update', rooms[roomId].getGameState());
               
               // 为每个玩家发送包含其底牌的游戏状态
               Object.keys(rooms[roomId].players).forEach(playerId => {
