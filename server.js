@@ -318,9 +318,15 @@ const evaluateCardCombo = (cards) => {
     value = getCardValue(sorted[0].value);
   }
   
+  // 提取牌的点数用于构建handRank
+  const cardValues = sorted.map(card => getCardValue(card.value));
+  
+  // 返回的结构与evaluateHand函数一致
   return {
     rank,
     value,
+    handType: Math.floor(value / 100), // 从value中提取手牌类型
+    handRank: cardValues, // 添加handRank属性
     cards: sorted
   };
 };
@@ -328,11 +334,24 @@ const evaluateCardCombo = (cards) => {
 // 比较两个手牌的大小
 const compareHands = (hand1, hand2) => {
   // 首先比较牌型大小（handType值越大，牌型越强）
-  if (hand1.value !== hand2.value) {
+  if (hand1.handType !== hand2.handType) {
+    return hand1.handType - hand2.handType;
+  } else if (hand1.value !== hand2.value) {
+    // 兼容旧版评估结果，如果有value属性但没有handType，使用value
     return hand1.value - hand2.value;
   }
   
   // 如果主要牌型值相同，比较剩余的牌
+  // 比较手牌中的最高点数序列
+  if (hand1.handRank && hand2.handRank) {
+    for (let i = 0; i < hand1.handRank.length && i < hand2.handRank.length; i++) {
+      if (hand1.handRank[i] !== hand2.handRank[i]) {
+        return hand1.handRank[i] - hand2.handRank[i];
+      }
+    }
+  }
+  
+  // 如果手牌的排名也相同，或者没有handRank属性，再比较手牌中的剩余牌
   return compareRemainingCards(hand1.cards, hand2.cards);
 };
 
@@ -978,85 +997,69 @@ class PokerGame {
 
   // 获取游戏状态（供客户端使用）
   getGameState() {
-    const players = {};
-    
-    // 为每个玩家创建一个浅拷贝，不包含敏感信息如其他玩家的牌
-    Object.keys(this.players).forEach(playerId => {
-      const player = { ...this.players[playerId] };
-      players[playerId] = {
-        id: player.id,
-        name: player.name,
-        chips: player.chips,
-        bet: player.bet,
-        folded: player.folded,
-        disconnected: player.disconnected,
-        isReady: player.isReady,
-        handDescription: player.handDescription || '',
-        isSpectator: player.isSpectator || false, // 观战状态
-        isAllIn: player.isAllIn || false         // 全下状态
-      };
-    });
-    
+    // 导出当前游戏状态
     return {
       roomId: this.roomId,
+      roomOwner: this.roomOwner,
+      players: this.players,
       gameState: this.gameState,
-      players,
+      pot: this.pot,
+      communityCards: this.communityCards,
+      currentPlayer: this.currentPlayer,
       dealerPosition: this.dealerPosition,
       smallBlindPosition: this.smallBlindPosition,
       bigBlindPosition: this.bigBlindPosition,
-      currentPlayer: this.currentPlayer,
-      communityCards: this.communityCards,
-      pot: this.pot,
-      currentBet: this.currentBet,
       winners: this.winners,
-      roomOwner: this.roomOwner
+      currentBet: this.currentBet,
+      lastRaisePlayer: this.lastRaisePlayer,
+      smallBlind: this.smallBlind,
+      bigBlind: this.bigBlind
     };
   }
 
-  // 获取特定玩家的游戏状态（只显示该玩家自己的手牌）
+  // 获取特定玩家的游戏状态（只显示该玩家自己的底牌）
   getGameStateForPlayer(playerId) {
-    // 先获取基本游戏状态
+    // 获取基本游戏状态
     const gameState = this.getGameState();
     
     // 检查指定的玩家是否存在
     if (!this.players[playerId]) {
-      return gameState;
+      return gameState; // 如果玩家不存在，直接返回常规游戏状态
     }
     
     // 创建玩家数据的深拷贝，避免修改原始数据
-    const players = JSON.parse(JSON.stringify(gameState.players));
+    const playersCopy = JSON.parse(JSON.stringify(gameState.players));
     
-    // 遍历所有玩家
-    Object.keys(players).forEach(id => {
-      // 判断是否是观战者
-      const isSpectator = this.players[id].isSpectator;
-      
-      if (id === playerId && !isSpectator) {
-        // 当前玩家可以看到自己的手牌（如果不是观战者）
-        players[id].cards = this.players[id].hand;
-      } else if (this.gameState === 'showdown') {
-        // 在摊牌阶段，可以看到所有未弃牌玩家的手牌
-        if (!this.players[id].folded && !this.players[id].isSpectator) {
-          players[id].cards = this.players[id].hand;
-        } else {
-          // 弃牌玩家和观战者的手牌保持隐藏
-          players[id].cards = [];
-        }
+    // 为每个玩家分配适当的信息
+    for (const pid in playersCopy) {
+      // 为每个玩家添加cards属性以保持向后兼容性
+      if (playersCopy[pid].hand) {
+        playersCopy[pid].cards = [...playersCopy[pid].hand];
       } else {
-        // 其他情况，隐藏玩家手牌
-        players[id].cards = [];
+        playersCopy[pid].cards = [];
       }
       
-      // 添加手牌描述（如果存在且玩家未弃牌）
-      if (this.players[id].handDescription && (!this.players[id].folded || this.gameState === 'showdown')) {
-        players[id].handDescription = this.players[id].handDescription;
+      // 如果是请求的玩家，显示他们的手牌
+      if (pid === playerId) {
+        // 保持玩家自己的手牌可见
+        continue;
+      } 
+      // 在摊牌阶段，显示未弃牌玩家的手牌
+      else if (gameState.gameState === 'showdown' && !playersCopy[pid].folded) {
+        // 保持未弃牌玩家的手牌可见用于摊牌展示
+        continue;
+      } 
+      // 在其他情况下，隐藏其他玩家的手牌
+      else {
+        playersCopy[pid].hand = []; // 隐藏其他玩家的手牌
+        playersCopy[pid].cards = []; // 同时隐藏cards属性
       }
-    });
+    }
     
-    // 返回定制的游戏状态，包含玩家信息
+    // 返回自定义的游戏状态
     return {
       ...gameState,
-      players
+      players: playersCopy
     };
   }
 
@@ -1237,8 +1240,8 @@ class PokerGame {
       // 根据牌型排序确定赢家 - 确保正确比较牌型大小
       hands.sort((a, b) => {
         // 首先比较牌型等级
-        if (a.bestHand.value !== b.bestHand.value) {
-          return b.bestHand.value - a.bestHand.value; // 值越大牌型越强
+        if (a.bestHand.handType !== b.bestHand.handType) {
+          return b.bestHand.handType - a.bestHand.handType; // handType越大牌型越强
         }
         
         // 如果牌型相同，比较剩余牌点数
@@ -1247,7 +1250,14 @@ class PokerGame {
       
       // 找出所有拥有最高牌型的玩家（处理平局）
       const highestHand = hands[0].bestHand;
-      const winners = hands.filter(h => compareHands(h.bestHand, highestHand) === 0);
+      const winners = hands.filter(h => {
+        // 首先比较牌型等级
+        if (h.bestHand.handType !== highestHand.handType) {
+          return false;
+        }
+        // 如果牌型相同，比较剩余牌
+        return compareHands(h.bestHand, highestHand) === 0;
+      });
       
       // 计算每个赢家应得的筹码
       const winAmount = Math.floor(totalPot / winners.length);
@@ -1483,7 +1493,13 @@ class PokerGame {
       description = `高牌${valueNameMap[highCards[0]]}`;
     }
     
-    return { handType, handRank, description };
+    return { 
+      handType, 
+      handRank, 
+      description,
+      value: handType * 100, // 确保value与handType对应
+      cards: sortedCards
+    };
   }
 
   // 将游戏状态发送给所有玩家
